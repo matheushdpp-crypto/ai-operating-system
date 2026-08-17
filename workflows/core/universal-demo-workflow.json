@@ -1,0 +1,25 @@
+{
+  "name": "Universal Enterprise Invoice Processing Pipeline",
+  "slug": "universal-invoice-pipeline",
+  "description": "Universal 12-stage enterprise pipeline demonstrating deterministic routing, skill composition, pgvector knowledge lookup, agent decisioning, policy check, and human-in-the-loop approval escalation.",
+  "trigger_type": "WEBHOOK",
+  "trigger_config": {
+    "path": "/api/v1/workflows/trigger/universal-invoice",
+    "method": "POST"
+  },
+  "steps_config": [
+    { "name": "Trigger Ingestion", "stage": "TRIGGER" },
+    { "name": "Task & Domain Identification", "stage": "IDENTIFY" },
+    { "name": "Context & Memory Hydration", "stage": "LOAD_CONTEXT" },
+    { "name": "Agent Selection (Router / Orchestrator)", "stage": "SELECT_AGENT" },
+    { "name": "Skill Assembly & Parsing", "stage": "LOAD_SKILLS" },
+    { "name": "Knowledge & RAG Retrieval", "stage": "LOAD_KNOWLEDGE" },
+    { "name": "Agent Runtime Execution", "stage": "EXECUTE_AGENT" },
+    { "name": "Deterministic Policy Verification", "stage": "CHECK_POLICY" },
+    { "name": "Human Approval Gate", "stage": "HUMAN_APPROVAL", "optional": true },
+    { "name": "Tool & ERP Side Effects Execution", "stage": "EXECUTE_SIDE_EFFECTS" },
+    { "name": "Entity State & Memory Update", "stage": "UPDATE_STATE" },
+    { "name": "Audit Trail & Complete", "stage": "COMPLETE" }
+  ],
+  "is_active": true
+}

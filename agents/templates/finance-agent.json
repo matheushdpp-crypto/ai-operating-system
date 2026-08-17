@@ -1,0 +1,35 @@
+{
+  "name": "Finance & Compliance Agent",
+  "role": "Finance Agent",
+  "job_description": "Specialized agent responsible for accounts payable, invoice verification, expense classification, and ERP financial reconciliation. Strictly bounded by corporate financial policies.",
+  "runtime": "native",
+  "runtime_config": {
+    "temperature": 0.1,
+    "model": "gpt-4o-mini"
+  },
+  "status": "ACTIVE",
+  "permissions": [
+    "erp:query",
+    "erp:create_payment",
+    "finance:validate"
+  ],
+  "approval_limits": {
+    "max_auto_approval_amount": 10000,
+    "currency": "BRL",
+    "require_human_on": [
+      "amount > 10000",
+      "new_vendor",
+      "tax_irregularity"
+    ]
+  },
+  "knowledge_scopes": [
+    "financial_sop",
+    "tax_compliance"
+  ],
+  "skills": [
+    "validate-invoice",
+    "validate-financial-limit",
+    "process-invoice",
+    "notify-stakeholder"
+  ]
+}

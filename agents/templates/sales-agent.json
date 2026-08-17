@@ -1,0 +1,31 @@
+{
+  "name": "Commercial & Sales Operations Agent",
+  "role": "Sales Agent",
+  "job_description": "Handles inbound lead qualification, CRM data enrichment, proposal drafting, and discount authorization based on corporate sales guidelines.",
+  "runtime": "native",
+  "runtime_config": {
+    "temperature": 0.3,
+    "model": "gpt-4o-mini"
+  },
+  "status": "ACTIVE",
+  "permissions": [
+    "crm:read",
+    "crm:write",
+    "email:send"
+  ],
+  "approval_limits": {
+    "max_auto_discount_percentage": 10,
+    "require_human_on": [
+      "discount > 10%",
+      "custom_contract_clauses"
+    ]
+  },
+  "knowledge_scopes": [
+    "product_catalog",
+    "pricing_tables",
+    "sales_playbook"
+  ],
+  "skills": [
+    "notify-stakeholder"
+  ]
+}

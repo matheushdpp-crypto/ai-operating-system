@@ -1,0 +1,24 @@
+{
+  "name": "AiOS Orchestrator",
+  "role": "Orchestrator Agent",
+  "job_description": "Central coordinator responsible for analyzing unrouted requests, identifying task domains, routing to specialized agents, monitoring execution pipelines, and managing global workflow state.",
+  "runtime": "native",
+  "runtime_config": {
+    "temperature": 0.2,
+    "model": "gpt-4o-mini"
+  },
+  "status": "ACTIVE",
+  "permissions": [
+    "agents:read",
+    "workflows:route",
+    "workflows:execute",
+    "audit:write"
+  ],
+  "approval_limits": {},
+  "knowledge_scopes": [
+    "all"
+  ],
+  "skills": [
+    "notify-stakeholder"
+  ]
+}

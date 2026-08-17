@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AiOS Control Center | AI Operating System</title>
+  <meta name="description" content="AI Operating System - Enterprise Human-in-the-loop and Agent Operations Control Center">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/styles/main.css">
+</head>
+<body>
+  <div id="app" class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">AiOS</div>
+        <div class="brand-info">
+          <div class="brand-title">Ai Operating System</div>
+          <div class="brand-subtitle" id="org-name-badge">Carregando...</div>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <div class="nav-group-label">OPERAÇÕES</div>
+        <button class="nav-item active" data-view="dashboard" id="nav-dashboard">
+          <span class="nav-icon">📊</span> Painel de Controle
+        </button>
+        <button class="nav-item" data-view="approvals" id="nav-approvals">
+          <span class="nav-icon">🛡️</span> Fila de Aprovações
+          <span class="badge-count" id="pending-badge" style="display: none;">0</span>
+        </button>
+        <button class="nav-item" data-view="runs" id="nav-runs">
+          <span class="nav-icon">⚡</span> Execuções & Timeline
+        </button>
+
+        <div class="nav-group-label">ARQUITETURA DE IA</div>
+        <button class="nav-item" data-view="agents" id="nav-agents">
+          <span class="nav-icon">🤖</span> Agentes Registrados
+        </button>
+        <button class="nav-item" data-view="skills" id="nav-skills">
+          <span class="nav-icon">🧩</span> Biblioteca de Skills
+        </button>
+        <button class="nav-item" data-view="workflows" id="nav-workflows">
+          <span class="nav-icon">🔄</span> Workflows & Pipelines
+        </button>
+        <button class="nav-item" data-view="knowledge" id="nav-knowledge">
+          <span class="nav-icon">📚</span> Knowledge & RAG
+        </button>
+        <button class="nav-item" data-view="tools" id="nav-tools">
+          <span class="nav-icon">🔌</span> Tools & Integrações
+        </button>
+
+        <div class="nav-group-label">GOVERNANÇA</div>
+        <button class="nav-item" data-view="policies" id="nav-policies">
+          <span class="nav-icon">⚖️</span> Políticas Determinísticas
+        </button>
+        <button class="nav-item" data-view="audit" id="nav-audit">
+          <span class="nav-icon">📜</span> Logs de Auditoria
+        </button>
+        <button class="nav-item" data-view="wizard" id="nav-wizard">
+          <span class="nav-icon">⚙️</span> Setup Wizard
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="status-dot"></span>
+          <span class="status-text" id="system-status-label">Sistema Conectado</span>
+        </div>
+        <div class="version-label">v1.0.0 Enterprise Template</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="page-title">Painel de Controle</h1>
+        </div>
+        <div class="topbar-right">
+          <button class="btn btn-secondary btn-sm" id="btn-trigger-demo">
+            ⚡ Executar Workflow Universal Demo
+          </button>
+          <div class="user-profile-badge">
+            <span class="user-avatar">A</span>
+            <span class="user-name" id="user-display-name">Admin Operador</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- View Container (SPA) -->
+      <section class="content-container" id="view-container">
+        <!-- Injected dynamically via app.js -->
+      </section>
+    </main>
+  </div>
+
+  <!-- Notification Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

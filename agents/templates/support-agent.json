@@ -1,0 +1,31 @@
+{
+  "name": "Customer Support & Success Agent",
+  "role": "Support Agent",
+  "job_description": "Resolves customer support inquiries, diagnoses technical issues from knowledge manuals, generates troubleshooting guides, and escalates critical outages to engineering.",
+  "runtime": "native",
+  "runtime_config": {
+    "temperature": 0.2,
+    "model": "gpt-4o-mini"
+  },
+  "status": "ACTIVE",
+  "permissions": [
+    "tickets:read",
+    "tickets:reply",
+    "knowledge:read"
+  ],
+  "approval_limits": {
+    "require_human_on": [
+      "refund_request",
+      "legal_threat",
+      "sla_breach"
+    ]
+  },
+  "knowledge_scopes": [
+    "user_manuals",
+    "faq",
+    "api_documentation"
+  ],
+  "skills": [
+    "notify-stakeholder"
+  ]
+}

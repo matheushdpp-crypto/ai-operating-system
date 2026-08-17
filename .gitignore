@@ -1,0 +1,38 @@
+# Node / Dependencies
+node_modules/
+dist/
+build/
+.npm
+npm-debug.log*
+
+# Environment & Secrets (NEVER commit secrets)
+.env
+.env.local
+.env.production
+*.pem
+*.key
+*.cert
+
+# Database data directories (Docker persistent volumes)
+postgres_data/
+storage_data/
+n8n_data/
+*.sqlite
+*.sqlite3
+*.db
+
+# OS / Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test & Coverage
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log

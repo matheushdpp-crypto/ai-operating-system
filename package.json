@@ -1,0 +1,49 @@
+{
+  "name": "aios-platform",
+  "version": "1.0.0",
+  "description": "AI Operating System (AiOS) - Enterprise-grade AI Infrastructure Platform Template",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "bin": {
+    "aios": "./bin/aios.js"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:api": "node --import tsx/esm apps/api/src/server.ts",
+    "dev:ui": "node apps/control-center/server.js",
+    "start": "node apps/api/dist/server.js",
+    "test": "node --import tsx/esm --test apps/api/tests/**/*.test.ts",
+    "test:unit": "node --import tsx/esm --test apps/api/tests/unit/**/*.test.ts",
+    "test:integration": "node --import tsx/esm --test apps/api/tests/integration/**/*.test.ts",
+    "test:e2e": "node --import tsx/esm --test apps/api/tests/e2e/**/*.test.ts",
+    "aios": "node ./bin/aios.js"
+  },
+  "keywords": [
+    "ai-operating-system",
+    "aios",
+    "agent-runtime",
+    "workflows",
+    "skills",
+    "human-in-the-loop",
+    "enterprise-ai",
+    "orchestration",
+    "policy-engine"
+  ],
+  "author": "AiOS Core Team",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
