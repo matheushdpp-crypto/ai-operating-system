@@ -2,20 +2,16 @@ import crypto from 'crypto';
 import { Approval, ApprovalStatus } from '../../types/index.js';
 import { db, MemoryDatabaseDriver } from '../../database/index.js';
 import { auditService } from '../audit/audit.service.js';
+import { workflowEngine } from '../workflows/workflow.engine.js';
 
 export class ApprovalService {
   private static instance: ApprovalService;
-  private resumeCallbacks: Map<string, (approval: Approval) => Promise<void>> = new Map();
 
   public static getInstance(): ApprovalService {
     if (!ApprovalService.instance) {
       ApprovalService.instance = new ApprovalService();
     }
     return ApprovalService.instance;
-  }
-
-  public registerResumeCallback(workflowRunId: string, callback: (approval: Approval) => Promise<void>) {
-    this.resumeCallbacks.set(workflowRunId, callback);
   }
 
   async createApproval(params: {
@@ -144,7 +140,7 @@ export class ApprovalService {
       organization_id: existing.organization_id,
       event_type: `approval.${status.toLowerCase()}`,
       actor_type: 'USER',
-      actor_id: decided_by || 'user:admin',
+      actor_id: decided_by || 'user:operator',
       target_type: 'approval',
       target_id: existing.id,
       payload: {
@@ -154,11 +150,10 @@ export class ApprovalService {
       },
     });
 
-    // Check if there is an active workflow resume callback registered
-    if (existing.workflow_run_id && this.resumeCallbacks.has(existing.workflow_run_id)) {
-      const callback = this.resumeCallbacks.get(existing.workflow_run_id)!;
-      this.resumeCallbacks.delete(existing.workflow_run_id);
-      await callback(existing);
+    // Durable workflow resumption:
+    // If this approval was linked to a workflow run, trigger the workflow engine resume from persistent state
+    if (existing.workflow_run_id) {
+      await workflowEngine.resumeWorkflowRun(existing.workflow_run_id, existing);
     }
 
     return existing;

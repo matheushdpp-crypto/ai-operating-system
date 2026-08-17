@@ -11,6 +11,8 @@ if [ -z "$1" ]; then
 fi
 
 BACKUP_FILE="$1"
+DB_USER="${DATABASE_USER:-aios_admin}"
+DB_NAME="${DATABASE_NAME:-aios_platform}"
 
 if [ ! -f "${BACKUP_FILE}" ]; then
     echo "❌ Arquivo não encontrado: ${BACKUP_FILE}"
@@ -18,6 +20,6 @@ if [ ! -f "${BACKUP_FILE}" ]; then
 fi
 
 echo "⚠️ Restaurando banco de dados a partir de ${BACKUP_FILE}..."
-gunzip -c "${BACKUP_FILE}" | docker compose exec -T postgres psql -U aios_admin aios_platform
+gunzip -c "${BACKUP_FILE}" | docker compose exec -T postgres psql -U "${DB_USER}" "${DB_NAME}"
 
 echo "✅ Restauração concluída com sucesso."

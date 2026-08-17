@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ApprovalService } from '../../src/modules/approvals/approval.service.js';
 
 describe('ApprovalService (Human-in-the-loop State Machine)', () => {
-  const service = new ApprovalService();
+  const service = ApprovalService.getInstance();
   const orgId = 'test_org_approval_1';
 
   test('creates pending approval and transitions to APPROVED', async () => {

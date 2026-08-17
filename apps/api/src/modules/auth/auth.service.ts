@@ -1,6 +1,15 @@
 import crypto from 'crypto';
 import { User, Organization, UserRole } from '../../types/index.js';
 import { db, MemoryDatabaseDriver } from '../../database/index.js';
+import { config } from '../../config/env.js';
+
+export interface TokenPayload {
+  userId: string;
+  organizationId: string;
+  role: UserRole;
+  email: string;
+  exp: number;
+}
 
 export class AuthService {
   private static instance: AuthService;
@@ -13,11 +22,63 @@ export class AuthService {
   }
 
   public hashPassword(password: string): string {
-    return crypto.createHash('sha256').update(password + '_aios_salt').digest('hex');
+    const salt = config.auth.jwtSecret.slice(0, 16);
+    return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha256').toString('hex');
   }
 
   public verifyPassword(password: string, hash: string): boolean {
     return this.hashPassword(password) === hash;
+  }
+
+  /**
+   * Generates HMAC SHA-256 Signed JWT Token
+   */
+  public generateToken(user: User): string {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const expiresInMs = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const payload: TokenPayload = {
+      userId: user.id,
+      organizationId: user.organization_id,
+      role: user.role,
+      email: user.email,
+      exp: Date.now() + expiresInMs,
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = crypto
+      .createHmac('sha256', config.auth.jwtSecret)
+      .update(`${header}.${encodedPayload}`)
+      .digest('base64url');
+
+    return `${header}.${encodedPayload}.${signature}`;
+  }
+
+  /**
+   * Verifies JWT Token and returns payload
+   */
+  public verifyToken(token: string): TokenPayload | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const [header, payload, signature] = parts;
+
+      const expectedSignature = crypto
+        .createHmac('sha256', config.auth.jwtSecret)
+        .update(`${header}.${payload}`)
+        .digest('base64url');
+
+      if (signature !== expectedSignature) {
+        return null;
+      }
+
+      const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as TokenPayload;
+      if (decoded.exp && Date.now() > decoded.exp) {
+        return null; // Expired
+      }
+
+      return decoded;
+    } catch {
+      return null;
+    }
   }
 
   async createOrganization(params: {
@@ -116,7 +177,9 @@ export class AuthService {
   async authenticate(email: string, password: string): Promise<User | null> {
     let user: User | null = null;
     if (db.isPostgres) {
-      const res = await db.driver.query<User>(`SELECT * FROM aios.users WHERE email = $1 AND is_active = true`, [email.toLowerCase()]);
+      const res = await db.driver.query<User>(`SELECT * FROM aios.users WHERE email = $1 AND is_active = true`, [
+        email.toLowerCase(),
+      ]);
       user = res.rows[0] || null;
     } else {
       const mem = db.driver as MemoryDatabaseDriver;

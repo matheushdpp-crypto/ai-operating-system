@@ -1,20 +1,35 @@
 import fastify from 'fastify';
 import cors from '@fastify/cors';
-import { config } from './config/env.js';
+import { config, validateProductionConfig } from './config/env.js';
 import { db } from './database/index.js';
+import { databaseMigrator } from './database/migrator.js';
 import { apiRoutes } from './routes/api.routes.js';
 
 export async function buildApp() {
+  // Validate production configuration safety
+  validateProductionConfig();
+
   const app = fastify({
     logger: {
       level: config.platform.logLevel,
     },
   });
 
-  // Enable CORS
+  // Enable CORS with environment-aware origin rules
   await app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+      if (!origin || config.platform.nodeEnv !== 'production') {
+        cb(null, true);
+        return;
+      }
+      if (config.auth.corsAllowedOrigins.includes(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error('CORS request blocked by security policy'), false);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    credentials: true,
   });
 
   // Register API routes with prefix
@@ -35,6 +50,11 @@ export async function buildApp() {
 export async function startServer() {
   // Initialize Database Service (Postgres or In-Memory)
   await db.init();
+
+  if (db.isPostgres) {
+    const migrations = await databaseMigrator.runMigrations();
+    console.log(`[DatabaseMigrator] Applied migrations: ${migrations.join(', ') || 'None (up to date)'}`);
+  }
 
   const app = await buildApp();
 

@@ -1,5 +1,4 @@
 import dotenv from 'dotenv';
-import path from 'path';
 
 // Load .env from root if available
 dotenv.config();
@@ -37,9 +36,9 @@ export const config = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-    hermesApiUrl: process.env.HERMES_API_URL || 'http://localhost:8000',
+    hermesApiUrl: process.env.HERMES_API_URL || '',
     hermesApiKey: process.env.HERMES_API_KEY || '',
-    openclawApiUrl: process.env.OPENCLAW_API_URL || 'http://localhost:8001',
+    openclawApiUrl: process.env.OPENCLAW_API_URL || '',
     openclawApiKey: process.env.OPENCLAW_API_KEY || '',
   },
   storage: {
@@ -56,5 +55,35 @@ export const config = {
     jwtSecret: process.env.JWT_SECRET || 'aios_jwt_default_secret_key_change_in_prod',
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
     corsOrigin: process.env.CORS_ORIGIN || '*',
+    corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : ['http://localhost:8080', 'http://localhost:3000', 'http://127.0.0.1:8080'],
   },
 };
+
+/**
+ * Enforces production security checks to prevent deployment with default insecure secrets
+ */
+export function validateProductionConfig() {
+  if (config.platform.nodeEnv === 'production') {
+    const insecurePatterns = ['change_me', 'change_in_prod', 'minioadmin', 'default_secret'];
+    const errors: string[] = [];
+
+    if (insecurePatterns.some((p) => config.database.password.includes(p))) {
+      errors.push('DATABASE_PASSWORD contains default/insecure placeholder.');
+    }
+    if (insecurePatterns.some((p) => config.auth.jwtSecret.includes(p)) || config.auth.jwtSecret.length < 32) {
+      errors.push('JWT_SECRET is using default value or is shorter than 32 characters.');
+    }
+    if (config.auth.corsOrigin === '*') {
+      errors.push('CORS_ORIGIN cannot be "*" in production. Specify exact domains in CORS_ALLOWED_ORIGINS.');
+    }
+
+    if (errors.length > 0) {
+      console.error('\n❌ [CRITICAL SECURITY ERROR] Production startup blocked due to insecure configurations:');
+      for (const err of errors) {
+        console.error(`   - ${err}`);
+      }
+      console.error('\nRun "node scripts/generate-secrets.js" to generate secure production secrets.\n');
+      throw new Error(`Production configuration validation failed: ${errors.join(', ')}`);
+    }
+  }
+}

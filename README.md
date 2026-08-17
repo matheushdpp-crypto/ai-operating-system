@@ -173,6 +173,7 @@ Acesse os guias detalhados na pasta [`docs/`](./docs/):
 - [⚖️ Políticas Determinísticas](./docs/policies.md)
 - [🛡️ Human-in-the-Loop & Aprovações](./docs/approvals.md)
 - [🔒 Segurança e RBAC](./docs/security.md)
+- [🛡️ Checklist de Prontidão para Produção](./docs/production-readiness.md)
 - [🚀 Guia de Deploy em Produção / VPS](./docs/deployment.md)
 - [🛠️ Troubleshooting e Diagnósticos](./docs/troubleshooting.md)
 

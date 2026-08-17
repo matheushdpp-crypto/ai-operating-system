@@ -1,22 +1,16 @@
 -- =============================================================================
--- AI Operating System (AiOS) - PostgreSQL Initial Schema & Extensions
+-- Migration 001: Initial Schema & Extensions
 -- =============================================================================
 
--- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "vector";
 
--- Create schemas
 CREATE SCHEMA IF NOT EXISTS n8n;
 CREATE SCHEMA IF NOT EXISTS aios;
 
--- Set search path
 SET search_path TO aios, public;
 
--- -----------------------------------------------------------------------------
--- 1. Organizations (Multi-tenant Foundation)
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.organizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -30,9 +24,6 @@ CREATE TABLE IF NOT EXISTS aios.organizations (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 2. Users & RBAC
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -46,9 +37,6 @@ CREATE TABLE IF NOT EXISTS aios.users (
     CONSTRAINT uq_user_org_email UNIQUE (organization_id, email)
 );
 
--- -----------------------------------------------------------------------------
--- 3. Agents
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.agents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -65,9 +53,6 @@ CREATE TABLE IF NOT EXISTS aios.agents (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 4. Skills (SKILL.md Declarative Definitions)
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.skills (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -90,7 +75,6 @@ CREATE TABLE IF NOT EXISTS aios.skills (
     CONSTRAINT uq_org_skill_slug UNIQUE (organization_id, slug)
 );
 
--- Agent to Skill Association (authorized capabilities)
 CREATE TABLE IF NOT EXISTS aios.agent_skills (
     agent_id UUID NOT NULL REFERENCES aios.agents(id) ON DELETE CASCADE,
     skill_id UUID NOT NULL REFERENCES aios.skills(id) ON DELETE CASCADE,
@@ -98,9 +82,6 @@ CREATE TABLE IF NOT EXISTS aios.agent_skills (
     PRIMARY KEY (agent_id, skill_id)
 );
 
--- -----------------------------------------------------------------------------
--- 5. Tools & MCP Integrations
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.tools (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -115,24 +96,18 @@ CREATE TABLE IF NOT EXISTS aios.tools (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 6. Deterministic Policies
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    scope VARCHAR(100) NOT NULL, -- e.g., 'financial', 'data_export', 'tool_execution'
-    rules JSONB NOT NULL, -- Array of conditional rules with decision: ALLOW, DENY, HUMAN_REQUIRED
+    scope VARCHAR(100) NOT NULL,
+    rules JSONB NOT NULL,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 7. Knowledge Bases & Semantic Vectors (pgvector)
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.knowledge_sources (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -162,21 +137,17 @@ CREATE TABLE IF NOT EXISTS aios.document_chunks (
     document_id UUID NOT NULL REFERENCES aios.documents(id) ON DELETE CASCADE,
     chunk_index INT NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(1536), -- standard text-embedding dimensions
+    embedding vector(1536),
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create IVFFLAT / HNSW index for fast similarity search
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON aios.document_chunks USING hnsw (embedding vector_cosine_ops);
 
--- -----------------------------------------------------------------------------
--- 8. Persistent Memory Layer
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
-    scope VARCHAR(100) NOT NULL, -- e.g., 'customer:123', 'agent_preference', 'lesson_learned'
+    scope VARCHAR(100) NOT NULL,
     entity_id VARCHAR(255),
     agent_id UUID REFERENCES aios.agents(id) ON DELETE SET NULL,
     content TEXT NOT NULL,
@@ -188,9 +159,6 @@ CREATE TABLE IF NOT EXISTS aios.memories (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 9. Workflows & State Machine
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.workflows (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
@@ -237,38 +205,13 @@ CREATE TABLE IF NOT EXISTS aios.workflow_steps (
     completed_at TIMESTAMP WITH TIME ZONE
 );
 
-CREATE TABLE IF NOT EXISTS aios.workflow_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workflow_run_id UUID NOT NULL REFERENCES aios.workflow_runs(id) ON DELETE CASCADE,
-    organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
-    event_type VARCHAR(100) NOT NULL,
-    payload JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS aios.idempotency_records (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
-    idempotency_key VARCHAR(255) NOT NULL,
-    operation_type VARCHAR(100) NOT NULL,
-    operation_id VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'IN_PROGRESS' CHECK (status IN ('IN_PROGRESS', 'COMPLETED', 'FAILED')),
-    response_data JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP WITH TIME ZONE,
-    CONSTRAINT uq_org_idempotency_key UNIQUE (organization_id, idempotency_key)
-);
-
--- -----------------------------------------------------------------------------
--- 10. Human-in-the-Loop Approvals
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
     workflow_run_id UUID REFERENCES aios.workflow_runs(id) ON DELETE CASCADE,
     task_id VARCHAR(255),
-    requested_by VARCHAR(255) NOT NULL, -- e.g., 'Agent: Finance Agent'
-    assigned_to VARCHAR(255), -- Role or User email
+    requested_by VARCHAR(255) NOT NULL,
+    assigned_to VARCHAR(255),
     reason TEXT NOT NULL,
     context JSONB DEFAULT '{}'::jsonb,
     proposed_action JSONB NOT NULL,
@@ -281,13 +224,10 @@ CREATE TABLE IF NOT EXISTS aios.approvals (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- -----------------------------------------------------------------------------
--- 11. Immutable Audit Logging
--- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aios.audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES aios.organizations(id) ON DELETE CASCADE,
-    event_type VARCHAR(100) NOT NULL, -- e.g. 'agent.selected', 'policy.checked', 'approval.created'
+    event_type VARCHAR(100) NOT NULL,
     actor_type VARCHAR(50) NOT NULL CHECK (actor_type IN ('USER', 'AGENT', 'SYSTEM', 'WEBHOOK')),
     actor_id VARCHAR(255) NOT NULL,
     target_type VARCHAR(100),
@@ -297,12 +237,8 @@ CREATE TABLE IF NOT EXISTS aios.audit_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create performance indexes
 CREATE INDEX IF NOT EXISTS idx_audit_org_event ON aios.audit_logs (organization_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON aios.audit_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_org ON aios.workflow_runs (organization_id, status);
-CREATE INDEX IF NOT EXISTS idx_workflow_events_run ON aios.workflow_events (workflow_run_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_idempotency_lookup ON aios.idempotency_records (organization_id, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_approvals_org_status ON aios.approvals (organization_id, status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON aios.memories (organization_id, scope);
-

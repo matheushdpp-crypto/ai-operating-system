@@ -1,7 +1,7 @@
 import crypto from 'crypto';
-import { Tool, ToolType, ToolStatus } from '../../types/index.js';
+import { Tool, ToolType } from '../../types/index.js';
 import { db, MemoryDatabaseDriver } from '../../database/index.js';
-import { auditService } from '../audit/audit.service.js';
+import { toolExecutor } from './tool.executor.js';
 
 export class ToolService {
   private static instance: ToolService;
@@ -48,6 +48,20 @@ export class ToolService {
     return newTool;
   }
 
+  async getTool(organization_id: string, id: string): Promise<Tool | null> {
+    if (db.isPostgres) {
+      const res = await db.driver.query<Tool>(`SELECT * FROM aios.tools WHERE id = $1 AND organization_id = $2`, [
+        id,
+        organization_id,
+      ]);
+      return res.rows[0] || null;
+    } else {
+      const mem = db.driver as MemoryDatabaseDriver;
+      const t = mem.getTable('tools').get(id) as Tool | undefined;
+      return t && t.organization_id === organization_id ? t : null;
+    }
+  }
+
   async listTools(organization_id: string, type?: ToolType): Promise<Tool[]> {
     if (db.isPostgres) {
       const query = type
@@ -71,30 +85,9 @@ export class ToolService {
     capability: string;
     agent_id?: string;
     input: Record<string, any>;
+    idempotency_key?: string;
   }): Promise<{ status: 'SUCCESS' | 'ERROR'; output: any }> {
-    await auditService.log({
-      organization_id: params.organization_id,
-      event_type: 'tool.called',
-      actor_type: params.agent_id ? 'AGENT' : 'SYSTEM',
-      actor_id: params.agent_id || 'system:tool_service',
-      target_type: 'tool',
-      target_id: params.tool_name || params.tool_id || 'unspecified_tool',
-      payload: {
-        capability: params.capability,
-        input: params.input,
-      },
-    });
-
-    // Simulated successful tool capability execution
-    return {
-      status: 'SUCCESS',
-      output: {
-        executed: true,
-        capability: params.capability,
-        timestamp: new Date().toISOString(),
-        result: `Tool action [${params.capability}] completed with input: ${JSON.stringify(params.input)}`,
-      },
-    };
+    return toolExecutor.execute(params);
   }
 }
 

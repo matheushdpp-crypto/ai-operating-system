@@ -3,8 +3,7 @@ import {
   Workflow,
   WorkflowRun,
   WorkflowStepRun,
-  WorkflowRunStatus,
-  WorkflowStepStatus,
+  WorkflowStepConfig,
   Approval,
 } from '../../types/index.js';
 import { db, MemoryDatabaseDriver } from '../../database/index.js';
@@ -92,6 +91,20 @@ export class WorkflowEngine {
     }
   }
 
+  async getWorkflowById(organization_id: string, id: string): Promise<Workflow | null> {
+    if (db.isPostgres) {
+      const res = await db.driver.query<Workflow>(
+        `SELECT * FROM aios.workflows WHERE organization_id = $1 AND id = $2`,
+        [organization_id, id]
+      );
+      return res.rows[0] || null;
+    } else {
+      const mem = db.driver as MemoryDatabaseDriver;
+      const w = mem.getTable('workflows').get(id) as Workflow | undefined;
+      return (w && w.organization_id === organization_id) ? w : null;
+    }
+  }
+
   async listWorkflows(organization_id: string): Promise<Workflow[]> {
     if (db.isPostgres) {
       const res = await db.driver.query<Workflow>(
@@ -149,12 +162,14 @@ export class WorkflowEngine {
   private async saveRun(run: WorkflowRun) {
     if (db.isPostgres) {
       await db.driver.query(
-        `INSERT INTO aios.workflow_runs (id, workflow_id, organization_id, trigger_payload, current_step, status, state_data, error_message, started_at, completed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO aios.workflow_runs (id, workflow_id, organization_id, trigger_payload, current_step, status, state_data, idempotency_key, retry_count, error_message, started_at, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (id) DO UPDATE SET
            current_step = EXCLUDED.current_step,
            status = EXCLUDED.status,
            state_data = EXCLUDED.state_data,
+           idempotency_key = EXCLUDED.idempotency_key,
+           retry_count = EXCLUDED.retry_count,
            error_message = EXCLUDED.error_message,
            completed_at = EXCLUDED.completed_at`,
         [
@@ -165,6 +180,8 @@ export class WorkflowEngine {
           run.current_step,
           run.status,
           JSON.stringify(run.state_data),
+          run.idempotency_key,
+          run.retry_count || 0,
           run.error_message,
           run.started_at,
           run.completed_at,
@@ -182,8 +199,8 @@ export class WorkflowEngine {
 
     if (db.isPostgres) {
       await db.driver.query(
-        `INSERT INTO aios.workflow_steps (id, workflow_run_id, step_name, step_order, status, input_data, output_data, error, duration_ms, started_at, completed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        `INSERT INTO aios.workflow_steps (id, workflow_run_id, step_name, step_order, status, input_data, output_data, error, retry_count, idempotency_key, duration_ms, started_at, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           entry.id,
           entry.workflow_run_id,
@@ -193,6 +210,8 @@ export class WorkflowEngine {
           JSON.stringify(entry.input_data),
           JSON.stringify(entry.output_data),
           entry.error,
+          entry.retry_count || 0,
+          entry.idempotency_key,
           entry.duration_ms,
           entry.started_at,
           entry.completed_at,
@@ -206,15 +225,65 @@ export class WorkflowEngine {
     return entry;
   }
 
+  private async emitEvent(organization_id: string, workflow_run_id: string, event_type: string, payload: Record<string, any>) {
+    const eventId = crypto.randomUUID();
+    const eventRecord = {
+      id: eventId,
+      workflow_run_id,
+      organization_id,
+      event_type,
+      payload,
+      created_at: new Date().toISOString(),
+    };
+
+    if (db.isPostgres) {
+      try {
+        await db.driver.query(
+          `INSERT INTO aios.workflow_events (id, workflow_run_id, organization_id, event_type, payload, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [eventRecord.id, eventRecord.workflow_run_id, eventRecord.organization_id, eventRecord.event_type, JSON.stringify(eventRecord.payload), eventRecord.created_at]
+        );
+      } catch (err: any) {
+        console.warn('[WorkflowEngine] Failed to record workflow event:', err.message);
+      }
+    } else {
+      const mem = db.driver as MemoryDatabaseDriver;
+      mem.getTable('workflow_events').set(eventId, eventRecord);
+    }
+  }
+
   /**
-   * Executes the Universal 12-Stage Pipeline
+   * Executes the Universal 12-Stage Pipeline (Generic, Idempotent, and Durable)
    */
   async executeWorkflow(params: {
     workflow_id: string;
     organization_id: string;
     trigger_payload: Record<string, any>;
     task_name?: string;
+    idempotency_key?: string;
   }): Promise<WorkflowRun> {
+    // Idempotency check: Return existing run if idempotency_key is repeated
+    if (params.idempotency_key) {
+      let existingRun: WorkflowRun | null = null;
+      if (db.isPostgres) {
+        const res = await db.driver.query<WorkflowRun>(
+          `SELECT * FROM aios.workflow_runs WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+          [params.organization_id, params.idempotency_key]
+        );
+        existingRun = res.rows[0] || null;
+      } else {
+        const mem = db.driver as MemoryDatabaseDriver;
+        const runs = Array.from(mem.getTable('workflow_runs').values()) as WorkflowRun[];
+        existingRun = runs.find(
+          (r) => r.organization_id === params.organization_id && r.idempotency_key === params.idempotency_key
+        ) || null;
+      }
+
+      if (existingRun) {
+        return existingRun;
+      }
+    }
+
     const runId = crypto.randomUUID();
     const run: WorkflowRun = {
       id: runId,
@@ -224,10 +293,18 @@ export class WorkflowEngine {
       current_step: 'TRIGGER',
       status: 'RUNNING',
       state_data: {},
+      idempotency_key: params.idempotency_key,
+      retry_count: 0,
       started_at: new Date().toISOString(),
     };
 
     await this.saveRun(run);
+    await this.emitEvent(run.organization_id, run.id, 'workflow.started', {
+      workflow_id: params.workflow_id,
+      trigger: params.trigger_payload,
+      idempotency_key: params.idempotency_key,
+    });
+
     await auditService.log({
       organization_id: params.organization_id,
       event_type: 'workflow.started',
@@ -238,7 +315,6 @@ export class WorkflowEngine {
       payload: { workflow_id: params.workflow_id, trigger: params.trigger_payload },
     });
 
-    // Execute pipeline asynchronously or sequentially
     return this.runPipeline(run, params.task_name || 'process_request');
   }
 
@@ -254,21 +330,27 @@ export class WorkflowEngine {
         step_order: order++,
         status: 'COMPLETED',
         input_data: run.trigger_payload,
-        output_data: { message: 'Trigger received and validated' },
+        output_data: { message: 'Trigger validated successfully', schema: 'GENERIC' },
         duration_ms: Date.now() - t1,
         started_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
       });
 
-      // 2. IDENTIFY
+      // 2. IDENTIFY (Domain Agnostic)
       const t2 = Date.now();
-      const taskIdentifier = run.trigger_payload.action || run.trigger_payload.process_type || taskName;
+      const taskIdentifier =
+        run.trigger_payload.action ||
+        run.trigger_payload.task_name ||
+        run.trigger_payload.operation ||
+        run.trigger_payload.process_type ||
+        taskName;
+
       await this.recordStep({
         workflow_run_id: run.id,
         step_name: 'IDENTIFY',
         step_order: order++,
         status: 'COMPLETED',
-        input_data: { task: taskIdentifier },
+        input_data: { task: taskIdentifier, payload_keys: Object.keys(run.trigger_payload) },
         output_data: { identified_task: taskIdentifier },
         duration_ms: Date.now() - t2,
         started_at: new Date().toISOString(),
@@ -277,21 +359,22 @@ export class WorkflowEngine {
 
       // 3. LOAD CONTEXT & MEMORY
       const t3 = Date.now();
-      const memories = await memoryService.getMemories(run.organization_id, 'global');
+      const entityScope = run.trigger_payload.entity_id ? `entity:${run.trigger_payload.entity_id}` : 'global';
+      const memories = await memoryService.getMemories(run.organization_id, entityScope);
       run.state_data.memories = memories;
       await this.recordStep({
         workflow_run_id: run.id,
         step_name: 'LOAD_CONTEXT',
         step_order: order++,
         status: 'COMPLETED',
-        input_data: { entity_id: run.trigger_payload.entity_id },
+        input_data: { entity_scope: entityScope },
         output_data: { memories_loaded: memories.length },
         duration_ms: Date.now() - t3,
         started_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
       });
 
-      // 4. SELECT AGENT
+      // 4. SELECT AGENT (Deterministic Routing First, Orchestrator Fallback)
       const t4 = Date.now();
       const routing = await deterministicRouter.routeTask({
         organization_id: run.organization_id,
@@ -320,7 +403,9 @@ export class WorkflowEngine {
 
       // 5. LOAD SKILLS
       const t5 = Date.now();
-      const skills = agent.skills || (await skillService.listSkills(run.organization_id));
+      const skills = agent.skills && agent.skills.length > 0
+        ? agent.skills
+        : (await skillService.listSkills(run.organization_id));
       run.state_data.skills = skills;
       await this.recordStep({
         workflow_run_id: run.id,
@@ -334,7 +419,7 @@ export class WorkflowEngine {
         completed_at: new Date().toISOString(),
       });
 
-      // 6. LOAD KNOWLEDGE
+      // 6. LOAD KNOWLEDGE (Semantic Retrieval)
       const t6 = Date.now();
       const query = `${taskIdentifier} ${JSON.stringify(run.trigger_payload)}`;
       const chunks = await knowledgeService.searchSimilar(run.organization_id, query, 3);
@@ -351,7 +436,7 @@ export class WorkflowEngine {
         completed_at: new Date().toISOString(),
       });
 
-      // 7. EXECUTE (Agent Runtime)
+      // 7. EXECUTE AGENT (Generic Agent Runtime)
       const t7 = Date.now();
       const runtimeAdapter = RuntimeRegistry.getAdapter(agent.runtime);
       const executionResult = await runtimeAdapter.executeTask({
@@ -378,20 +463,24 @@ export class WorkflowEngine {
         completed_at: new Date().toISOString(),
       });
 
-      // 8. CHECK POLICY
+      // 8. CHECK POLICY (Generic Deterministic Policy Evaluation)
       const t8 = Date.now();
       const proposedAction = executionResult.action_proposed || {
         action: taskIdentifier,
         params: run.trigger_payload,
       };
 
+      // Extract policy scope dynamically (workflow step config or action scope or general)
+      const policyScope = run.trigger_payload.policy_scope || proposedAction.params?.scope || 'general';
+
       const policyEval = await policyEngine.evaluate({
         organization_id: run.organization_id,
-        scope: 'financial',
+        scope: policyScope,
         action: proposedAction.action,
         context: {
           ...run.trigger_payload,
-          max_auto_approval_amount: agent.approval_limits?.max_auto_approval_amount,
+          ...proposedAction.params,
+          agent_approval_limits: agent.approval_limits,
         },
         agent_id: agent.id,
       });
@@ -409,7 +498,7 @@ export class WorkflowEngine {
         completed_at: new Date().toISOString(),
       });
 
-      // 9. HUMAN APPROVAL (HITL)
+      // 9. HUMAN APPROVAL GATE (Durable HITL - DB Backed)
       if (policyEval.requires_approval) {
         run.status = 'WAITING_APPROVAL';
         run.current_step = 'HUMAN_APPROVAL';
@@ -425,6 +514,7 @@ export class WorkflowEngine {
             task: taskIdentifier,
             trigger: run.trigger_payload,
             execution: executionResult.output,
+            next_step_order: order,
           },
           proposed_action: proposedAction,
         });
@@ -433,16 +523,16 @@ export class WorkflowEngine {
         await this.recordStep({
           workflow_run_id: run.id,
           step_name: 'HUMAN_APPROVAL',
-          step_order: order++,
+          step_order: order,
           status: 'PAUSED',
           input_data: { approval_id: approval.id, reason: approval.reason },
           output_data: { status: 'WAITING_FOR_HUMAN_OPERATOR' },
           started_at: new Date().toISOString(),
         });
 
-        // Register resume callback when human approves/rejects
-        approvalService.registerResumeCallback(run.id, async (decidedApproval: Approval) => {
-          await this.resumePipeline(run, decidedApproval, order);
+        await this.emitEvent(run.organization_id, run.id, 'workflow.paused', {
+          step: 'HUMAN_APPROVAL',
+          approval_id: approval.id,
         });
 
         return run;
@@ -455,6 +545,10 @@ export class WorkflowEngine {
       run.error_message = err.message;
       run.completed_at = new Date().toISOString();
       await this.saveRun(run);
+
+      await this.emitEvent(run.organization_id, run.id, 'workflow.failed', {
+        error: err.message,
+      });
 
       await auditService.log({
         organization_id: run.organization_id,
@@ -471,12 +565,25 @@ export class WorkflowEngine {
   }
 
   /**
-   * Resumes workflow after human approval or rejection
+   * Resumes workflow run from persistent database state (Survives Server Restarts)
    */
-  public async resumePipeline(run: WorkflowRun, approval: Approval, nextOrder: number): Promise<WorkflowRun> {
+  public async resumeWorkflowRun(workflowRunId: string, approval: Approval): Promise<WorkflowRun | null> {
+    const { run, steps } = await this.getRun(workflowRunId);
+    if (!run) {
+      console.warn(`[WorkflowEngine] Cannot resume: run ${workflowRunId} not found`);
+      return null;
+    }
+
+    if (run.status !== 'WAITING_APPROVAL') {
+      console.warn(`[WorkflowEngine] Run ${workflowRunId} is not waiting for approval (status: ${run.status})`);
+      return run;
+    }
+
+    const nextOrder = (steps.length > 0 ? Math.max(...steps.map((s) => s.step_order)) : 9) + 1;
+
     if (approval.status === 'REJECTED') {
       run.status = 'FAILED';
-      run.error_message = `Rejected by human reviewer: ${approval.decision_reason || 'No reason provided'}`;
+      run.error_message = `Workflow rejected by reviewer: ${approval.decision_reason || 'No reason provided'}`;
       run.completed_at = new Date().toISOString();
       await this.saveRun(run);
 
@@ -491,6 +598,11 @@ export class WorkflowEngine {
         completed_at: new Date().toISOString(),
       });
 
+      await this.emitEvent(run.organization_id, run.id, 'workflow.rejected', {
+        approval_id: approval.id,
+        reason: approval.decision_reason,
+      });
+
       return run;
     }
 
@@ -498,7 +610,7 @@ export class WorkflowEngine {
     await this.recordStep({
       workflow_run_id: run.id,
       step_name: 'HUMAN_APPROVAL',
-      step_order: nextOrder++,
+      step_order: nextOrder,
       status: 'COMPLETED',
       input_data: { approval_id: approval.id },
       output_data: { decision: approval.status, decided_by: approval.decided_by },
@@ -506,8 +618,13 @@ export class WorkflowEngine {
       completed_at: new Date().toISOString(),
     });
 
+    await this.emitEvent(run.organization_id, run.id, 'workflow.resumed', {
+      approval_id: approval.id,
+      status: approval.status,
+    });
+
     run.status = 'RUNNING';
-    return this.continuePipelineExecution(run, approval.proposed_action, nextOrder);
+    return this.continuePipelineExecution(run, approval.proposed_action, nextOrder + 1);
   }
 
   private async continuePipelineExecution(
@@ -515,33 +632,38 @@ export class WorkflowEngine {
     action: Record<string, any>,
     order: number
   ): Promise<WorkflowRun> {
-    // 10. EXECUTE SIDE EFFECTS / TOOLS
+    // 10. EXECUTE SIDE EFFECTS / TOOLS (With Authorization & Retries)
     const t10 = Date.now();
+    const actionName = action.action || action.name || 'default_action';
+    const actionParams = action.params || action;
+
     const toolExec = await toolService.executeToolAction({
       organization_id: run.organization_id,
-      capability: action.action || 'default_action',
+      capability: actionName,
       agent_id: run.state_data.agent?.id,
-      input: action.params || action,
+      input: actionParams,
+      idempotency_key: run.idempotency_key ? `tool:${run.idempotency_key}:${order}` : undefined,
     });
 
     await this.recordStep({
       workflow_run_id: run.id,
       step_name: 'EXECUTE_SIDE_EFFECTS',
       step_order: order++,
-      status: 'COMPLETED',
+      status: toolExec.status === 'SUCCESS' ? 'COMPLETED' : 'FAILED',
       input_data: action,
       output_data: toolExec.output,
+      error: toolExec.status === 'ERROR' ? toolExec.output?.error : undefined,
       duration_ms: Date.now() - t10,
       started_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
     });
 
-    // 11. UPDATE STATE & MEMORY
+    // 11. UPDATE STATE & MEMORY (Generic State Persistence)
     const t11 = Date.now();
     await memoryService.saveMemory({
       organization_id: run.organization_id,
       scope: 'workflow_history',
-      content: `Completed workflow for ${action.action} on amount ${action.params?.amount || 'N/A'}`,
+      content: `Completed execution for action [${actionName}] with status [${toolExec.status}]`,
       type: 'EPISODIC',
       agent_id: run.state_data.agent?.id,
     });
@@ -559,9 +681,9 @@ export class WorkflowEngine {
       completed_at: new Date().toISOString(),
     });
 
-    // 12. LOG / AUDIT & COMPLETE
+    // 12. COMPLETE & AUDIT
     const t12 = Date.now();
-    run.status = 'COMPLETED';
+    run.status = toolExec.status === 'SUCCESS' ? 'COMPLETED' : 'FAILED';
     run.current_step = 'COMPLETE';
     run.completed_at = new Date().toISOString();
     await this.saveRun(run);
@@ -570,12 +692,20 @@ export class WorkflowEngine {
       workflow_run_id: run.id,
       step_name: 'COMPLETE',
       step_order: order++,
-      status: 'COMPLETED',
+      status: run.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED',
       input_data: { run_id: run.id },
-      output_data: { status: 'COMPLETED', summary: 'Universal 12-stage workflow completed successfully.' },
+      output_data: {
+        status: run.status,
+        summary: `Universal 12-stage workflow finished with status: ${run.status}`,
+      },
       duration_ms: Date.now() - t12,
       started_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
+    });
+
+    await this.emitEvent(run.organization_id, run.id, 'workflow.completed', {
+      status: run.status,
+      result: run.state_data.final_result,
     });
 
     await auditService.log({
@@ -585,7 +715,7 @@ export class WorkflowEngine {
       actor_id: 'system:workflow_engine',
       target_type: 'workflow_run',
       target_id: run.id,
-      payload: { status: 'COMPLETED', execution_summary: run.state_data.final_result },
+      payload: { status: run.status, execution_summary: run.state_data.final_result },
     });
 
     return run;

@@ -163,6 +163,9 @@ export interface WorkflowStepConfig {
   policy_scope?: string;
   optional?: boolean;
   action_type?: string;
+  timeout_ms?: number;
+  max_retries?: number;
+  retry_backoff_ms?: number;
 }
 
 export interface Workflow {
@@ -187,6 +190,8 @@ export interface WorkflowRun {
   current_step: string;
   status: WorkflowRunStatus;
   state_data: Record<string, any>;
+  idempotency_key?: string;
+  retry_count?: number;
   error_message?: string;
   started_at: string;
   completed_at?: string;
@@ -201,9 +206,32 @@ export interface WorkflowStepRun {
   input_data: Record<string, any>;
   output_data: Record<string, any>;
   error?: string;
+  retry_count?: number;
+  idempotency_key?: string;
   duration_ms?: number;
   started_at: string;
   completed_at?: string;
+}
+
+export interface WorkflowEvent {
+  id: string;
+  workflow_run_id: string;
+  organization_id: string;
+  event_type: string;
+  payload: Record<string, any>;
+  created_at: string;
+}
+
+export interface IdempotencyRecord {
+  id: string;
+  organization_id: string;
+  idempotency_key: string;
+  operation_type: string;
+  operation_id?: string;
+  status: 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+  response_data?: Record<string, any>;
+  created_at: string;
+  expires_at?: string;
 }
 
 export type MemoryType = 'FACT' | 'PREFERENCE' | 'LESSON_LEARNED' | 'EPISODIC' | 'SUMMARY';
@@ -242,6 +270,7 @@ export interface Document {
   mime_type?: string;
   raw_content?: string;
   chunk_count: number;
+  content_hash?: string;
   metadata: Record<string, any>;
   created_at: string;
 }
@@ -271,3 +300,4 @@ export interface AuditLog {
   ip_address?: string;
   created_at: string;
 }
+

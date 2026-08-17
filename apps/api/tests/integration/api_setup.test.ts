@@ -11,7 +11,7 @@ describe('AiOS Setup Wizard & Architecture Integration', () => {
     const setupResult = await setupService.runSetupWizard({
       company: {
         name: 'Enterprise Integration Test Corp',
-        industry: 'FinTech',
+        industry: 'Technology',
       },
       admin: {
         name: 'Integration Admin',
@@ -30,18 +30,18 @@ describe('AiOS Setup Wizard & Architecture Integration', () => {
 
     // Verify Agents created
     const agents = await agentService.listAgents(orgId);
-    assert.ok(agents.length >= 2, 'Should create at least Orchestrator and Finance agents');
+    assert.ok(agents.length >= 1, 'Should create Orchestrator agent');
 
     // Verify Skills registered
     const skills = await skillService.listSkills(orgId);
-    assert.ok(skills.some((s) => s.slug === 'validate-invoice'));
+    assert.ok(skills.some((s) => s.slug === 'execute-action'));
 
     // Verify Knowledge Base ingested & searchable
-    const searchResults = await knowledgeService.searchSimilar(orgId, 'invoice validation limits', 2);
+    const searchResults = await knowledgeService.searchSimilar(orgId, 'action approval limits', 2);
     assert.ok(searchResults.length > 0, 'Should find knowledge chunks');
 
     // Verify Workflow created
     const workflows = await workflowEngine.listWorkflows(orgId);
-    assert.ok(workflows.some((w) => w.slug === 'universal-invoice-pipeline'));
+    assert.ok(workflows.some((w) => w.slug === 'action-approval-pipeline'));
   });
 });

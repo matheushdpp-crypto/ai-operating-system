@@ -83,6 +83,8 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
       'workflows',
       'workflow_runs',
       'workflow_steps',
+      'workflow_events',
+      'idempotency_records',
       'approvals',
       'audit_logs',
     ];
@@ -100,7 +102,7 @@ export class MemoryDatabaseDriver implements IDatabaseDriver {
   }
 
   async query<T = any>(text: string, params: any[] = []): Promise<{ rows: T[]; rowCount: number }> {
-    // Basic mock query handler for memory driver
+    // Mock query handler for memory driver
     return { rows: [] as T[], rowCount: 0 };
   }
 
@@ -139,10 +141,17 @@ export class DatabaseService {
         this.isPostgres = true;
         console.log('[DatabaseService] Connected successfully to PostgreSQL (with pgvector).');
       } else {
+        if (config.platform.nodeEnv === 'production') {
+          throw new Error('PostgreSQL is not reachable. In production (NODE_ENV=production), in-memory fallback is disallowed. FAIL FAST.');
+        }
         console.log('[DatabaseService] PostgreSQL not reachable at configured host. Running with In-Memory Repository.');
         await pgDriver.close();
       }
-    } catch {
+    } catch (err: any) {
+      if (config.platform.nodeEnv === 'production') {
+        console.error('❌ [DatabaseService] Critical production error:', err.message);
+        throw err;
+      }
       console.log('[DatabaseService] Using In-Memory Repository driver.');
     }
   }

@@ -14,7 +14,7 @@ export class PolicyEngine {
   }
 
   /**
-   * Resolves nested property path e.g. "invoice.amount" or "user.role"
+   * Resolves nested property path e.g. "params.value" or "user.role" or "agent.name"
    */
   private resolveValue(obj: any, path: string): any {
     if (!obj || !path) return undefined;
@@ -56,7 +56,6 @@ export class PolicyEngine {
         if (Array.isArray(actualValue)) return actualValue.includes(targetValue);
         return false;
       case 'custom':
-        // Safe evaluation without eval
         return Boolean(actualValue);
       default:
         return false;
@@ -64,11 +63,11 @@ export class PolicyEngine {
   }
 
   /**
-   * Evaluates a proposed action against all active policies matching the scope
+   * Evaluates a proposed action against all active policies matching the scope and organization
    */
   public async evaluate(params: {
     organization_id: string;
-    scope: string;
+    scope?: string;
     action: string;
     context: Record<string, any>;
     agent_id?: string;
@@ -79,25 +78,40 @@ export class PolicyEngine {
     let finalDecision: PolicyDecisionResult = 'ALLOW';
     let suggestedRole: string | undefined = undefined;
 
-    // Check agent-specific approval limits if agent_id provided
-    if (params.context.amount !== undefined && params.context.max_auto_approval_amount !== undefined) {
-      if (params.context.amount > params.context.max_auto_approval_amount) {
-        finalDecision = 'HUMAN_REQUIRED';
-        reasons.push(
-          `Amount (${params.context.amount}) exceeds agent automatic approval threshold (${params.context.max_auto_approval_amount})`
-        );
+    // Check generic agent approval limit conditions if configured on the agent
+    const agentLimits = params.context.agent_approval_limits;
+    if (agentLimits) {
+      if (agentLimits.restricted_tools && Array.isArray(agentLimits.restricted_tools)) {
+        if (agentLimits.restricted_tools.includes(params.action)) {
+          finalDecision = 'DENY';
+          reasons.push(`Action [${params.action}] is explicitly in agent restricted_tools list.`);
+        }
+      }
+      if (typeof agentLimits.max_auto_approval_amount === 'number' && typeof params.context.amount === 'number') {
+        if (params.context.amount > agentLimits.max_auto_approval_amount) {
+          if (finalDecision !== 'DENY') finalDecision = 'HUMAN_REQUIRED';
+          reasons.push(`Amount (${params.context.amount}) exceeds agent threshold (${agentLimits.max_auto_approval_amount})`);
+        }
+      }
+      if (typeof agentLimits.max_auto_approval_value === 'number' && typeof params.context.value === 'number') {
+        if (params.context.value > agentLimits.max_auto_approval_value) {
+          if (finalDecision !== 'DENY') finalDecision = 'HUMAN_REQUIRED';
+          reasons.push(`Value (${params.context.value}) exceeds agent threshold (${agentLimits.max_auto_approval_value})`);
+        }
       }
     }
+
+    const evaluationContext = {
+      action: params.action,
+      agent_id: params.agent_id,
+      ...params.context,
+    };
 
     for (const policy of policies) {
       if (!policy.is_active) continue;
 
       for (const rule of policy.rules) {
-        const matches = this.evaluateCondition(rule.condition, {
-          action: params.action,
-          agent_id: params.agent_id,
-          ...params.context,
-        });
+        const matches = this.evaluateCondition(rule.condition, evaluationContext);
 
         if (matches) {
           matchedRules.push(rule);
@@ -106,7 +120,7 @@ export class PolicyEngine {
             suggestedRole = rule.suggested_approver_role;
           }
 
-          // DENY has highest priority, then HUMAN_REQUIRED, then ALLOW
+          // Priority: DENY > HUMAN_REQUIRED > ALLOW
           if (rule.decision === 'DENY') {
             finalDecision = 'DENY';
           } else if (rule.decision === 'HUMAN_REQUIRED' && finalDecision !== 'DENY') {
@@ -133,7 +147,7 @@ export class PolicyEngine {
       target_type: 'action',
       target_id: params.action,
       payload: {
-        scope: params.scope,
+        scope: params.scope || 'general',
         decision: result.decision,
         reasons: result.reasons,
         requires_approval: result.requires_approval,
@@ -178,16 +192,18 @@ export class PolicyEngine {
 
   async listPolicies(organization_id: string, scope?: string): Promise<Policy[]> {
     if (db.isPostgres) {
-      const query = scope
-        ? `SELECT * FROM aios.policies WHERE organization_id = $1 AND scope = $2`
+      const query = scope && scope !== 'general' && scope !== '*'
+        ? `SELECT * FROM aios.policies WHERE organization_id = $1 AND (scope = $2 OR scope = 'general' OR scope = '*')`
         : `SELECT * FROM aios.policies WHERE organization_id = $1`;
-      const params = scope ? [organization_id, scope] : [organization_id];
+      const params = scope && scope !== 'general' && scope !== '*' ? [organization_id, scope] : [organization_id];
       const res = await db.driver.query<Policy>(query, params);
       return res.rows;
     } else {
       const mem = db.driver as MemoryDatabaseDriver;
       return Array.from(mem.getTable('policies').values()).filter(
-        (p: Policy) => p.organization_id === organization_id && (!scope || p.scope === scope)
+        (p: Policy) =>
+          p.organization_id === organization_id &&
+          (!scope || scope === 'general' || scope === '*' || p.scope === scope || p.scope === 'general' || p.scope === '*')
       );
     }
   }
